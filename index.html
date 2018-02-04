@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<head>
+  <meta charset="utf-8">
+  <script src="https://d3js.org/d3.v3.min.js"></script>
+  <script src="https://d3js.org/queue.v1.min.js"></script>
+  <style>
+    body { margin:0;position:fixed;top:0;right:0;bottom:0;left:0; }
+    div.tooltip {
+        color: #222;
+        background-color: #fff;
+        padding: .5em;
+        text-shadow: #f5f5f5 0 1px 0;
+        border-radius: 2px;
+        opacity: 0.9;
+        position: absolute;
+    }
+    .legend {
+      font-size: 12px;
+    }
+    rect {
+      stroke-width: 2;
+    }
+  </style>
+</head>
+
+<body>
+  <div>
+    <input id="slider" type="range" value="1" min="1" max="100" step="1" />
+    <span id="week">week </span>
+  </div>
+  <script>
+		var width = 700,
+  		  height = 580;
+    
+    var legendRectSize = 18;
+    var legendSpacing = 4;
+    
+    var min_color,max_color,
+    gridSize = Math.floor(width / 24),
+          legendElementWidth = gridSize*2;
+    
+    var colors  = ["rgb(208,240,213)", "rgb(221,161,163)", "rgb(94,186,97)", "rgb(42,141,71)", "rgb(0,91,36)"];
+
+		var svg = d3.select( "body" )
+  		.append( "svg" )
+		  .attr( "width", width )
+		  .attr( "height", height );
+    
+    var francejson_global;
+
+    var projection =  d3.geo.conicConformal().center([2.454071, 46.279229]).scale(3000);
+
+    var path = d3.geo.path()
+                 .projection(projection);
+    
+    /*tooltip*/
+    var tooltip = d3.select('body').append('div').attr('class', 'hidden tooltip');
+    
+    var color = d3.scale.quantize()
+   		.range(["rgb(243,220,221)", "rgb(217,150,152)", "rgb(184,90,90)", "rgb(188,56,60)", "rgb(102,0,1)"]);
+    
+   	console.log("this is color domain : " + color.domain());
+    
+    queue()
+      .defer(d3.json, 'fr.json')
+      .defer(d3.csv, 'GrippeFrance2014.csv')   
+      .await(processData);
+      
+    
+    function processData(error,francejson,grippedata) {
+      var max = -Infinity; //for the sake of color
+      var min = Infinity;  //for the sake of color
+      var numWeeks = Object.keys(grippedata[0]).length - 2;
+      var listWeeks = Object.keys(grippedata[0]);
+      d3.select('#slider').attr("max", numWeeks);
+      //console.log(numWeeks);
+      for (var i = 0; i < grippedata.length; i++){ 
+        //Nom de l'etat
+        var dataState = grippedata[i].region;
+      
+        //Valeur associee a l'etat
+        var dataValue = Object.values(grippedata[i]);
+        var tmp = Math.max(dataValue[1]) + 1;
+        
+        if (Math.max(dataValue[i]) > max) {
+          max = Math.max(dataValue[i]);
+        }
+        if (Math.min(dataValue[i]) < min) {
+          min = Math.min(dataValue[i]);
+        }
+        	//Recherche de l'etat dans le GeoJSON
+           for (var j = 0; j < francejson.features.length; j++) {
+               var jsonState = francejson.features[j].properties.nom;
+               if (dataState == jsonState) {
+               //On injecte la valeur de l'Etat dans le json
+               francejson.features[j].properties.value = dataValue;
+               //Pas besoin de chercher plus loin
+               break;
+           		}
+ 					 }
+        
+        var colorScale = d3.scale.threshold()
+        .domain([min, max])
+        .range([0].concat(colors));
+        
+        color.domain([min, max]);
+        console.log("this is min : " + min);
+        console.log("this is max : " + max);
+        // affect francejson_global for drawMap function
+        francejson_global = francejson;
+        drawMap(francejson, 1);
+        
+        var legend = svg.selectAll(".legend")
+            .data(colorScale.domain(), function(d) { return d; })
+            .enter().append("g")
+            .attr("class", "legend");
+
+        legend.append("rect")
+            .attr("x", function(d, i) { return legendElementWidth * i; })
+            .attr("y", height)
+            .attr("width", legendElementWidth)
+            .attr("height", gridSize / 2)
+            .style("fill", function(d, i) { return colors[i]; });
+
+        legend.append("text")
+            .attr("class", "mono")
+            .text(function(d) { return "= " + Math.round(d); })
+            .attr("x", function(d, i) { return legendElementWidth * i; })
+            .attr("y", height + gridSize);  
+      }
+      
+      d3.select("#slider").on("input", function() {
+        updateViz(+this.value);
+      });
+      
+      function updateViz(value_slide){
+        d3.select('#week').html("week: " + listWeeks[value_slide]); 
+        drawMap(francejson_global, value_slide);
+      }
+      
+      function drawMap(francejson, value_slide) {
+          carte = svg.selectAll("path")
+            .data(francejson.features);
+
+          // code en cas de mise a jour de la carte / de changement de semaine
+          carte
+            .attr("class", "update")
+            .style("fill", function(d) {
+            			if(d.properties.value){
+                    var value = d.properties.value[value_slide];
+                      if (value) {
+                        return color(value);
+                      } else {
+                        // si pas de valeur alors en gris
+                        return "#ccc";
+                      }
+                  }else {
+                    // si pas de valeur alors en gris
+                    return "#ccc";
+                  }
+            })
+            .on('mousemove', function(d) {
+                  var mouse = d3.mouse(svg.node()).map(function(d) {
+                    return parseInt(d);
+                  });
+                  tooltip.classed('hidden', false)
+                    .attr('style', 'left:' + (mouse[0] + 15) +
+                          'px; top:' + (mouse[1] - 35) + 'px')
+                    .html(d.properties.nom + ":" +  d.properties.value[value_slide]);
+            })
+            .on('mouseout', function() {
+                  tooltip.classed('hidden', true);
+              });  
+
+          // code pour la creation de la carte quand les donnees sont chargees la 1e fois.
+          carte.enter()
+            .append("path")
+            .attr("class", "enter")
+          	.attr("d", path)
+            .style("fill", function(d) {
+            			if(d.properties.value){
+                    var value = d.properties.value[value_slide];
+                      if (value) {
+                        return color(value);
+                      } else {
+                        // si pas de valeur alors en gris
+                        return "#ccc";
+                      }
+                  }else {
+                    // si pas de valeur alors en gris
+                    return "#ccc";
+                  }                  
+            })
+            .on('mousemove', function(d) {
+                  var mouse = d3.mouse(svg.node()).map(function(d) {
+                    return parseInt(d);
+                  });
+                  tooltip.classed('hidden', false)
+                    .attr('style', 'left:' + (mouse[0] + 15) +
+                          'px; top:' + (mouse[1] - 35) + 'px')
+                    .html(d.properties.nom + ":" +  d.properties.value[value_slide]);
+            })
+            .on('mouseout', function() {
+                  tooltip.classed('hidden', true);
+              });  
+        }
+      
+
+      
+    }
+   
+  </script> 
+
+</body>
